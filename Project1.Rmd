@@ -1,0 +1,137 @@
+---
+title: "Practical Machine Learning"
+author: "Edurne"
+date: "7 de octubre de 2015"
+output: html_document
+---
+
+#*INTRODUCTION*
+
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement - a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this project, our goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. 
+
+#*OBTAINING DATA*
+
+First, we download the 2 datasets: training and test datasets. Moreover, we load the required libraries for the anlysis.
+
+```{r}
+library(bitops);library(RCurl)
+library(lattice);library(ggplot2);library(caret)
+library(randomForest)
+library(foreach);library(iterators);library(parallel);library(doParallel)
+library(survival); library(splines);library(gbm)
+
+setwd("C:/Users/ealonso/Desktop/Coursera R/Practical Machine Learning/")#working directory
+
+x <- getURL("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv", ssl.verifypeer = FALSE)
+y <- getURL("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv", ssl.verifypeer = FALSE)
+train <- read.csv(textConnection(x))
+test <- read.csv(textConnection(y))
+
+save("train", file="./train.RData")
+save("test", file="./test.RData")
+```
+
+#*EXPLORATION AND CLEANING DATA*
+
+We can see that we have 19,622 observations and 160 variables in training dataset. For testing dataset, we have 20 observations and 160 variables.
+
+```{r}
+dim(train);dim(test)
+summary(train$classe)
+plot(train$classe, main = "Distribution of classe", xlab = "Classe's categories", ylab = "Frequency", col="blue")
+```
+
+Moreover, it was showed the frequency of the categories of predictor variable ("classe").
+
+Now, we start to clean the dataset. There are many variables with missing values. We are going to delete those variables which have at least the 90% of observations missing.
+
+```{r}
+NAs <- apply(train, 2, function(x) {sum(is.na(x))})
+train <- train[,which(NAs <  nrow(train)*0.9)]  
+```
+
+Although this is not the best solution we are going to delete those variables with a variance near zero.
+
+```{r}
+remove_var <- nearZeroVar(train, saveMetrics = TRUE)
+train <- train[, remove_var$nzv == FALSE]
+```
+
+Finally, we are going to delete the following variables because they don't give us interesting information: x, user name, raw timestamp part 1 and 2, cvtd timestamp and num window (the first six variables).
+
+```{r}
+train <- train[,7:ncol(train)]
+```
+
+#*DATA ANALYSIS*
+
+##Data partition
+
+We are going to divide our training dataset with the aim of validate the model. Usually, it is used 60% of observations as train dataset and 40% as validation dataset.
+
+```{r}
+set.seed(1978)#For making reproductible the analysis
+
+particion <- createDataPartition(train$classe, p=0.6,list=FALSE);
+training <- train[particion,]
+testing <- train[-particion,]
+```
+
+##Building the model
+
+I am going to contrast between two models: random forest (RfModel) and boosted regression trees (GbmModel). 
+
+```{r}
+registerDoParallel(makeCluster(detectCores()))#for multi-core
+RfModel <- train(classe ~ .,  method ="rf", data = training)    
+GbmModel <- train(classe ~ ., method = "gbm", data = training)
+```
+
+##Accuracy of models
+
+Now, we calculted the accuracy of models built:
+
+```{r}
+Rf_accuracy<- predict(RfModel, testing)
+print(confusionMatrix(Rf_accuracy, testing$classe))
+Gbm_accuracy<- predict(GbmModel , testing)
+print(confusionMatrix(Gbm_accuracy, testing$classe))
+```
+
+We can see in this output that the accuracy of the ramdom forest model was 0.9903 (95% confidence interlval: (0.9879, 0.9924)) and for the boosted regression tree was 0.9611 (95% CI: (0.9566, 0.9653)). Finally, I decide to use the random forest because its accuracy is higher (the accuracy graph is presented below).
+
+```{r}
+plot(RfModel, log="y")
+```
+
+##Variable importance
+
+Now, we are going to explore the importance of variables for model selected.
+
+```{r}
+PI <- varImp(RfModel$finalModel)
+PI$var <-rownames(PI)
+PI <- as.data.frame(PI[with(PI, order(PI$Overall, decreasing=TRUE)), ])
+rownames(PI) <- NULL
+print(PI)
+```
+
+We can see that the most important variable for predinting classe is roll belt following by pitch forearm.
+
+#**Testing data**
+
+We use the program given in the exercise of Coursera for prediction assignment:
+
+```{r}
+#Prediction Assignment Submission
+predictions <- predict(RfModel, test)
+#Function given in exercises
+pml_write_files = function(x){
+  n = length(x)
+  for(i in 1:n){
+    filename = paste0("problem_id_",i,".txt")
+    write.table(x[i],file=filename,quote=FALSE,row.names=FALSE,col.names=FALSE)
+  }
+}
+pml_write_files(predictions)
+```
